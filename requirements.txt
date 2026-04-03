@@ -3,3 +3,6 @@ Pillow>=10.0.0
 opencv-python>=4.8.0
 numpy>=1.24.0
 matplotlib>=3.7.0
+pylablib>=1.4.0
+pypylon>=3.0.0
+pytic>=0.2.0

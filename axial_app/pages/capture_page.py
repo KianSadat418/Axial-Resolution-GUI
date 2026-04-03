@@ -67,9 +67,14 @@ class CapturePage(ct.CTkFrame):
         self.current_exposure_us: int = config.DEFAULT_EXPOSURE_US
         self.current_gain: int = config.DEFAULT_GAIN
 
-        self.config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                        '..', '..', 'config.yml')
-        self.config_path = os.path.normpath(self.config_path)
+        import sys
+        _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        self.config_path = os.path.normpath(os.path.join(_base, 'config.yml'))
+        if not os.path.exists(self.config_path):
+            # fallback for non-frozen (dev) environment
+            self.config_path = os.path.normpath(
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'config.yml')
+            )
 
         # Scan progress tracking
         self._scan_progress: float = 0.0

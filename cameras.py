@@ -438,18 +438,112 @@ def detect_and_open_camera(
     return None, None
 
 
+class BaslerCamera(CameraBase):
+    """Basler camera backend via pypylon."""
+
+    def __init__(self, exposure_us: float = config.DEFAULT_EXPOSURE_US,
+                 gain: float = config.DEFAULT_GAIN):
+        self._exposure_us = exposure_us
+        self._gain = gain
+        self._camera = None
+        self._width: int = 0
+        self._height: int = 0
+
+    def open(self) -> None:
+        from pypylon import pylon  # type: ignore
+
+        tlf = pylon.TlFactory.GetInstance()
+        devices = tlf.EnumerateDevices()
+        if not devices:
+            raise RuntimeError("No Basler cameras found")
+
+        self._camera = pylon.InstantCamera(tlf.CreateDevice(devices[0]))
+        self._camera.Open()
+
+        # Mono8 pixel format for consistency with other backends
+        try:
+            self._camera.PixelFormat.Value = "Mono8"
+        except Exception:
+            pass
+
+        self._width = self._camera.Width.Value
+        self._height = self._camera.Height.Value
+        print(f"[BAS] Camera {self._camera.GetDeviceInfo().GetModelName()} "
+              f"{self._width}x{self._height}")
+
+        self.set_exposure(self._exposure_us)
+        self.set_gain(self._gain)
+
+        self._camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+
+    def set_exposure(self, exposure_us: float) -> None:
+        if self._camera is None:
+            return
+        try:
+            # Pylon 6+ uses ExposureTime; older SDKs use ExposureTimeAbs
+            if hasattr(self._camera, "ExposureTime"):
+                mn = self._camera.ExposureTime.Min
+                mx = self._camera.ExposureTime.Max
+                self._camera.ExposureTime.Value = max(mn, min(mx, float(exposure_us)))
+            else:
+                self._camera.ExposureTimeAbs.Value = float(exposure_us)
+        except Exception as e:
+            print("[BAS] set_exposure failed:", e)
+
+    def set_gain(self, gain_val: float) -> None:
+        if self._camera is None:
+            return
+        try:
+            if hasattr(self._camera, "Gain"):
+                mn = self._camera.Gain.Min
+                mx = self._camera.Gain.Max
+                self._camera.Gain.Value = max(mn, min(mx, float(gain_val)))
+            else:
+                self._camera.GainRaw.Value = int(gain_val)
+        except Exception as e:
+            print("[BAS] set_gain failed:", e)
+
+    def get_frame(self, timeout_ms: int = 100) -> Optional[np.ndarray]:
+        if self._camera is None:
+            return None
+        try:
+            from pypylon import pylon  # type: ignore
+            grab = self._camera.RetrieveResult(timeout_ms, pylon.TimeoutHandling_Return)
+            if grab is None or not grab.GrabSucceeded():
+                if grab is not None:
+                    grab.Release()
+                return None
+            img = grab.Array
+            grab.Release()
+            if img.ndim == 3 and img.shape[2] == 1:
+                img = img[:, :, 0]
+            return img.astype(np.uint8)
+        except Exception as e:
+            print("[BAS] get_frame error:", e)
+            return None
+
+    def get_size(self) -> Tuple[int, int]:
+        return self._width, self._height
+
+    def close(self) -> None:
+        if self._camera is not None:
+            try:
+                self._camera.StopGrabbing()
+                self._camera.Close()
+            except Exception:
+                pass
+            self._camera = None
+
+
 def _try_open_basler(
     exposure_us: float = config.DEFAULT_EXPOSURE_US,
     gain: float = config.DEFAULT_GAIN,
 ) -> tuple[Optional[CameraBase], Optional[str]]:
-    """
-    Try to detect and open a Basler camera (pypylon). Returns (None, None) if
-    not available or no device. Implement when Basler support is added.
-    """
     try:
-        import pypylon  # type: ignore  # noqa: F401
+        from pypylon import pylon  # type: ignore  # noqa: F401
     except ImportError:
         return None, None
-    # TODO: enumerate devices, open first, wrap in a BaslerCamera(CameraBase)
-    return None, None
+    cam = BaslerCamera(exposure_us=exposure_us, gain=gain)
+    cam.open()
+    return cam, "Basler"
 
